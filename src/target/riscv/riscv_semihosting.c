@@ -32,6 +32,7 @@
 
 #include "target/target.h"
 #include "riscv.h"
+#include "riscv_reg.h"
 
 static int riscv_semihosting_setup(struct target *target, int enable);
 static int riscv_semihosting_post_result(struct target *target);
@@ -67,7 +68,7 @@ enum semihosting_result riscv_semihosting(struct target *target, int *retval)
 	}
 
 	riscv_reg_t pc;
-	int result = riscv_get_register(target, &pc, GDB_REGNO_PC);
+	int result = riscv_reg_get(target, &pc, GDB_REGNO_PC);
 	if (result != ERROR_OK)
 		return SEMIHOSTING_ERROR;
 
@@ -107,15 +108,15 @@ enum semihosting_result riscv_semihosting(struct target *target, int *retval)
 		riscv_reg_t r0;
 		riscv_reg_t r1;
 
-		result = riscv_get_register(target, &r0, GDB_REGNO_A0);
+		result = riscv_reg_get(target, &r0, GDB_REGNO_A0);
 		if (result != ERROR_OK) {
-			LOG_TARGET_DEBUG(target, "   -> ERROR (couldn't read a0)");
+			LOG_TARGET_ERROR(target, "Could not read semihosting operation code (register a0)");
 			return SEMIHOSTING_ERROR;
 		}
 
-		result = riscv_get_register(target, &r1, GDB_REGNO_A1);
+		result = riscv_reg_get(target, &r1, GDB_REGNO_A1);
 		if (result != ERROR_OK) {
-			LOG_TARGET_DEBUG(target, "   -> ERROR (couldn't read a1)");
+			LOG_TARGET_ERROR(target, "Could not read semihosting operation code (register a1)");
 			return SEMIHOSTING_ERROR;
 		}
 
@@ -134,13 +135,13 @@ enum semihosting_result riscv_semihosting(struct target *target, int *retval)
 			}
 		} else {
 			/* Unknown operation number, not a semihosting call. */
-			LOG_TARGET_DEBUG(target, "   -> NONE (unknown operation number)");
+			LOG_TARGET_ERROR(target, "Unknown semihosting operation requested (op = 0x%x)", semihosting->op);
 			return SEMIHOSTING_NONE;
 		}
 	}
 
 	/* Resume right after the EBREAK 4 bytes instruction. */
-	*retval = riscv_set_register(target, GDB_REGNO_PC, pc + 4);
+	*retval = riscv_reg_set(target, GDB_REGNO_PC, pc + 4);
 	if (*retval != ERROR_OK)
 		return SEMIHOSTING_ERROR;
 
@@ -184,6 +185,6 @@ static int riscv_semihosting_post_result(struct target *target)
 	}
 
 	LOG_TARGET_DEBUG(target, "Result: 0x%" PRIx64, semihosting->result);
-	riscv_set_register(target, GDB_REGNO_A0, semihosting->result);
+	riscv_reg_set(target, GDB_REGNO_A0, semihosting->result);
 	return 0;
 }
