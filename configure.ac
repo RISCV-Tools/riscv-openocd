@@ -104,12 +104,18 @@ AS_IF([test -x "$srcdir/guess-rev.sh"], [
 AC_MSG_RESULT([$build_release])
 
 # Adapter drivers
-# 1st column -- configure option
-# 2nd column -- description
-# 3rd column -- symbol used for both config.h and automake
+# 1st column -- Basename for the configure option generated with AC_ARG_ENABLE.
+#               For example, "buspirate" generates options "--enable-buspirate[=yes/no]"
+#               and "--disable-buspirate".
+# 2nd column -- Description for the configure option. For example, "Bus Pirate"
+#               generates "Enable building support for the Bus Pirate (default is auto)".
+# 3rd column -- Basename for the config.h and Automake symbols.
+#               For example, basename "BUS_PIRATE" generates "BUILD_BUS_PIRATE" with AC_DEFINE
+#               for config.h and "BUS_PIRATE" with AM_CONDITIONAL for Automake.
 m4_define([ADAPTER_ARG], [m4_argn([1], $1)])
 m4_define([ADAPTER_DESC], [m4_argn([2], $1)])
 m4_define([ADAPTER_SYM], [m4_argn([3], $1)])
+# AC_ARG_ENABLE uses prefix "enable_" to name the corresponding option variable.
 m4_define([ADAPTER_VAR], [enable_[]ADAPTER_ARG($1)])
 m4_define([ADAPTER_OPT], [m4_translit(ADAPTER_ARG($1), [_], [-])])
 
@@ -119,6 +125,7 @@ m4_define([USB1_ADAPTERS],
 	[[stlink], [ST-Link Programmer], [HLADAPTER_STLINK]],
 	[[ti_icdi], [TI ICDI JTAG Programmer], [HLADAPTER_ICDI]],
 	[[ulink], [Keil ULINK JTAG Programmer], [ULINK]],
+	[[angie], [ANGIE Adapter], [ANGIE]],
 	[[usb_blaster_2], [Altera USB-Blaster II Compatible], [USB_BLASTER_2]],
 	[[ft232r], [Bitbang mode of FT232R based devices], [FT232R]],
 	[[vsllink], [Versaloon-Link JTAG Programmer], [VSLLINK]],
@@ -157,8 +164,16 @@ m4_define([PCIE_ADAPTERS],
 m4_define([SERIAL_PORT_ADAPTERS],
 	[[[buspirate], [Bus Pirate], [BUS_PIRATE]]])
 
+# The word 'Adapter' in "Dummy Adapter" below must begin with a capital letter
+# because there is an M4 macro called 'adapter'.
+m4_define([DUMMY_ADAPTER],
+	[[[dummy], [Dummy Adapter], [DUMMY]]])
+
 m4_define([OPTIONAL_LIBRARIES],
 	[[[capstone], [Use Capstone disassembly framework], []]])
+
+m4_define([COVERAGE],
+	[[[gcov], [Collect coverage using gcov], []]])
 
 AC_ARG_ENABLE([doxygen-html],
   AS_HELP_STRING([--disable-doxygen-html],
@@ -187,6 +202,19 @@ AC_ARG_ENABLE([wextra],
 AC_ARG_ENABLE([werror],
   AS_HELP_STRING([--disable-werror], [Do not treat warnings as errors]),
   [gcc_werror=$enableval], [gcc_werror=$gcc_warnings])
+
+AC_ARG_ENABLE([gcov],
+  AS_HELP_STRING([--enable-gcov], [Enable runtime coverage collection via gcov]),
+  [enable_gcov=$enableval], [enable_gcov=no])
+
+AS_IF([test "x$enable_gcov" = "xyes"], [
+  AC_DEFINE([USE_GCOV], [1], [1 to enable coverage collection using gcov.])
+  dnl When collecting coverage, disable optimizations.
+  dnl This overrides the "-O2" that autoconf uses by default:
+  CFLAGS+=" -O0"
+], [
+  AC_DEFINE([USE_GCOV], [0], [0 to leave coverage collection disabled.])
+])
 
 # set default verbose options, overridden by following options
 debug_usb_io=no
@@ -234,20 +262,24 @@ AS_IF([test "x$debug_malloc" = "xyes"], [
   AC_DEFINE([_DEBUG_FREE_SPACE_],[1], [Include malloc free space in logging])
 ])
 
-AC_ARG_ENABLE([dummy],
-  AS_HELP_STRING([--enable-dummy], [Enable building the dummy port driver]),
-  [build_dummy=$enableval], [build_dummy=no])
-
 AC_ARG_ENABLE([rshim],
   AS_HELP_STRING([--enable-rshim], [Enable building the rshim driver]),
   [build_rshim=$enableval], [build_rshim=no])
 
+AC_ARG_ENABLE([dmem],
+  AS_HELP_STRING([--enable-dmem], [Enable building the dmem driver]),
+  [build_dmem=$enableval], [build_dmem=no])
+
 m4_define([AC_ARG_ADAPTERS], [
   m4_foreach([adapter], [$1],
 	[AC_ARG_ENABLE(ADAPTER_OPT([adapter]),
-		AS_HELP_STRING([--enable-ADAPTER_OPT([adapter])],
+		AS_HELP_STRING([--enable-ADAPTER_OPT([adapter])[[[=yes/no/auto]]]],
 			[Enable building support for the ]ADAPTER_DESC([adapter])[ (default is $2)]),
-		[], [ADAPTER_VAR([adapter])=$2])
+		[case "${enableval}" in
+			yes|no|auto) ;;
+			*) AC_MSG_ERROR([Option --enable-ADAPTER_OPT([adapter]) has invalid value "${enableval}".]) ;;
+			esac],
+		[ADAPTER_VAR([adapter])=$2])
   ])
 ])
 
@@ -256,11 +288,14 @@ AC_ARG_ADAPTERS([
   HIDAPI_ADAPTERS,
   HIDAPI_USB1_ADAPTERS,
   LIBFTDI_ADAPTERS,
-  LIBFTDI_USB1_ADAPTERS
+  LIBFTDI_USB1_ADAPTERS,
   LIBGPIOD_ADAPTERS,
   SERIAL_PORT_ADAPTERS,
+  PCIE_ADAPTERS,
   LIBJAYLINK_ADAPTERS
   ],[auto])
+
+AC_ARG_ADAPTERS([DUMMY_ADAPTER],[no])
 
 AC_ARG_ENABLE([parport],
   AS_HELP_STRING([--enable-parport], [Enable building the pc parallel port driver]),
@@ -333,23 +368,13 @@ AC_ARG_ENABLE([sysfsgpio],
   AS_HELP_STRING([--enable-sysfsgpio], [Enable building support for programming driven via sysfs gpios.]),
   [build_sysfsgpio=$enableval], [build_sysfsgpio=no])
 
-AC_ARG_ENABLE([xlnx_pcie_xvc],
-  AS_HELP_STRING([--enable-xlnx-pcie-xvc], [Enable building support for Xilinx XVC/PCIe.]),
-  [build_xlnx_pcie_xvc=$enableval], [build_xlnx_pcie_xvc=no])
-
 AS_CASE([$host_os],
-  [linux*], [],
+  [linux*], [
+    is_linux=yes
+  ],
   [
     AS_IF([test "x$build_sysfsgpio" = "xyes"], [
       AC_MSG_ERROR([sysfsgpio is only available on linux])
-    ])
-
-    AS_IF([test "x$enable_linuxgpiod" = "xyes"], [
-      AC_MSG_ERROR([linuxgpiod is only available on linux])
-    ])
-
-    AS_IF([test "x$build_xlnx_pcie_xvc" = "xyes"], [
-      AC_MSG_ERROR([xlnx_pcie_xvc is only available on linux])
     ])
 
     AS_CASE([$host_os], [freebsd*], [],
@@ -357,6 +382,10 @@ AS_CASE([$host_os],
       AS_IF([test "x$build_rshim" = "xyes"], [
         AC_MSG_ERROR([build_rshim is only available on linux or freebsd])
       ])
+    ])
+
+    AS_IF([test "x$build_dmem" = "xyes"], [
+      AC_MSG_ERROR([dmem is only available on linux])
     ])
 ])
 
@@ -374,7 +403,7 @@ AC_ARG_ENABLE([internal-libjaylink],
   [use_internal_libjaylink=$enableval], [use_internal_libjaylink=no])
 
 AC_ARG_ENABLE([remote-bitbang],
-  AS_HELP_STRING([--enable-remote-bitbang], [Enable building support for the Remote Bitbang jtag driver]),
+  AS_HELP_STRING([--enable-remote-bitbang], [Enable building support for the Remote Bitbang driver]),
   [build_remote_bitbang=$enableval], [build_remote_bitbang=yes])
 
 AS_CASE(["${host_cpu}"],
@@ -385,6 +414,8 @@ AS_CASE(["${host_cpu}"],
     ])
     parport_use_ppdev=yes
 ])
+
+can_build_buspirate=yes
 
 AS_CASE([$host],
   [*-cygwin*], [
@@ -417,14 +448,14 @@ AS_CASE([$host],
     ])
     parport_use_giveio=yes
 
-    AS_IF([test "x$enable_buspirate" = "xyes"], [
-      AC_MSG_ERROR([buspirate currently not supported by MinGW32 hosts])
+    AS_IF([test "x$ADAPTER_VAR([buspirate])" = "xyes"], [
+      AC_MSG_ERROR([The Bus Pirate adapter is currently not supported by MinGW32 hosts.])
     ])
 
     # In case enable_buspirate=auto, make sure it will not be built.
-    enable_buspirate=no
+    can_build_buspirate=no
 
-    AC_SUBST([HOST_CPPFLAGS], [-D__USE_MINGW_ANSI_STDIO])
+    AC_SUBST([HOST_CPPFLAGS], ["-D__USE_MINGW_ANSI_STDIO -DFD_SETSIZE=128"])
   ],
   [*darwin*], [
     is_darwin=yes
@@ -478,11 +509,14 @@ AS_IF([test "x$build_rshim" = "xyes"], [
   AC_DEFINE([BUILD_RSHIM], [0], [0 if you don't want to debug BlueField SoC via rshim.])
 ])
 
-AS_IF([test "x$build_dummy" = "xyes"], [
-  build_bitbang=yes
-  AC_DEFINE([BUILD_DUMMY], [1], [1 if you want dummy driver.])
+AS_IF([test "x$build_dmem" = "xyes"], [
+  AC_DEFINE([BUILD_DMEM], [1], [1 if you want to debug via Direct Mem.])
 ], [
-  AC_DEFINE([BUILD_DUMMY], [0], [0 if you don't want dummy driver.])
+  AC_DEFINE([BUILD_DMEM], [0], [0 if you don't want to debug via Direct Mem.])
+])
+
+AS_IF([test "x$ADAPTER_VAR([dummy])" = "xyes"], [
+  build_bitbang=yes
 ])
 
 AS_IF([test "x$build_ep93xx" = "xyes"], [
@@ -563,30 +597,33 @@ AS_IF([test "x$build_gw16012" = "xyes"], [
   AC_DEFINE([BUILD_GW16012], [0], [0 if you don't want the Gateworks GW16012 driver.])
 ])
 
-AS_IF([test "x$enable_buspirate" != "xno"], [
-  AC_DEFINE([BUILD_BUSPIRATE], [1], [1 if you want the Buspirate JTAG driver.])
-], [
-  AC_DEFINE([BUILD_BUSPIRATE], [0], [0 if you don't want the Buspirate JTAG driver.])
-])
-
 AS_IF([test "x$use_internal_jimtcl" = "xyes"], [
   AS_IF([test -f "$srcdir/jimtcl/configure"], [
     AS_IF([test "x$use_internal_jimtcl_maintainer" = "xyes"], [
-      jimtcl_config_options="--disable-install-jim --with-ext=json --maintainer"
+      jimtcl_config_options="--disable-install-jim --with-ext=json --minimal --disable-ssl --maintainer"
     ], [
-      jimtcl_config_options="--disable-install-jim --with-ext=json"
+      jimtcl_config_options="--disable-install-jim --with-ext=json --minimal --disable-ssl"
     ])
     AX_CONFIG_SUBDIR_OPTION([jimtcl], [$jimtcl_config_options])
   ], [
     AC_MSG_ERROR([jimtcl not found, run git submodule init and git submodule update.])
   ])
+], [
+  PKG_CHECK_MODULES([JIMTCL], [jimtcl >= 0.79], [
+      have_jimtcl_pkg_config=yes
+    ], [
+      have_jimtcl_pkg_config=no
+      AC_CHECK_HEADER([jim.h], [], [
+        AC_MSG_ERROR([jimtcl is required but not found via pkg-config and system includes])
+      ])
+  ])
 ])
 
 AS_IF([test "x$build_remote_bitbang" = "xyes"], [
   build_bitbang=yes
-  AC_DEFINE([BUILD_REMOTE_BITBANG], [1], [1 if you want the Remote Bitbang JTAG driver.])
+  AC_DEFINE([BUILD_REMOTE_BITBANG], [1], [1 if you want the Remote Bitbang driver.])
 ], [
-  AC_DEFINE([BUILD_REMOTE_BITBANG], [0], [0 if you don't want the Remote Bitbang JTAG driver.])
+  AC_DEFINE([BUILD_REMOTE_BITBANG], [0], [0 if you don't want the Remote Bitbang driver.])
 ])
 
 AS_IF([test "x$build_sysfsgpio" = "xyes"], [
@@ -594,13 +631,6 @@ AS_IF([test "x$build_sysfsgpio" = "xyes"], [
   AC_DEFINE([BUILD_SYSFSGPIO], [1], [1 if you want the SysfsGPIO driver.])
 ], [
   AC_DEFINE([BUILD_SYSFSGPIO], [0], [0 if you don't want SysfsGPIO driver.])
-])
-
-AS_IF([test "x$build_xlnx_pcie_xvc" = "xyes"], [
-  build_xlnx_pcie_xvc=yes
-  AC_DEFINE([BUILD_XLNX_PCIE_XVC], [1], [1 if you want the Xilinx XVC/PCIe driver.])
-], [
-  AC_DEFINE([BUILD_XLNX_PCIE_XVC], [0], [0 if you don't want Xilinx XVC/PCIe driver.])
 ])
 
 PKG_CHECK_MODULES([LIBUSB1], [libusb-1.0], [
@@ -655,11 +685,20 @@ PKG_CHECK_MODULES([LIBFTDI], [libftdi1], [
 	PKG_CHECK_MODULES([LIBFTDI], [libftdi], [use_libftdi=yes], [use_libftdi=no])
 ])
 
-PKG_CHECK_MODULES([LIBGPIOD], [libgpiod], [use_libgpiod=yes], [use_libgpiod=no])
+PKG_CHECK_MODULES([LIBGPIOD], [libgpiod < 2.0], [
+	use_libgpiod=yes
+	PKG_CHECK_EXISTS([libgpiod >= 1.5],
+		[AC_DEFINE([HAVE_LIBGPIOD1_FLAGS_BIAS], [1], [define if libgpiod v1 has line request flags bias])])
+], [use_libgpiod=no])
 
 PKG_CHECK_MODULES([LIBJAYLINK], [libjaylink >= 0.2],
 	[use_libjaylink=yes], [use_libjaylink=no])
 
+# Arg $1: An array of adapter triplets, used to derive option and variable names for each adapter.
+# Arg $2: Whether the adapters can be enabled, for example, because
+#         their prerequisites are installed in the system.
+# Arg $3: What prerequisites are missing, to be shown in an error message
+#         if an adapter was requested but cannot be enabled.
 m4_define([PROCESS_ADAPTERS], [
   m4_foreach([adapter], [$1], [
 	AS_IF([test $2], [
@@ -670,7 +709,7 @@ m4_define([PROCESS_ADAPTERS], [
 		])
 	], [
 		AS_IF([test "x$ADAPTER_VAR([adapter])" = "xyes"], [
-			AC_MSG_ERROR([$3 is required for the ADAPTER_DESC([adapter])])
+			AC_MSG_ERROR([$3 is required for [adapter] "ADAPTER_DESC([adapter])".])
 		])
 		ADAPTER_VAR([adapter])=no
 		AC_DEFINE([BUILD_]ADAPTER_SYM([adapter]), [0], [0 if you do not want the ]ADAPTER_DESC([adapter]).)
@@ -684,8 +723,12 @@ PROCESS_ADAPTERS([HIDAPI_ADAPTERS], ["x$use_hidapi" = "xyes"], [hidapi])
 PROCESS_ADAPTERS([HIDAPI_USB1_ADAPTERS], ["x$use_hidapi" = "xyes" -a "x$use_libusb1" = "xyes"], [hidapi and libusb-1.x])
 PROCESS_ADAPTERS([LIBFTDI_ADAPTERS], ["x$use_libftdi" = "xyes"], [libftdi])
 PROCESS_ADAPTERS([LIBFTDI_USB1_ADAPTERS], ["x$use_libftdi" = "xyes" -a "x$use_libusb1" = "xyes"], [libftdi and libusb-1.x])
-PROCESS_ADAPTERS([LIBGPIOD_ADAPTERS], ["x$use_libgpiod" = "xyes"], [libgpiod])
+PROCESS_ADAPTERS([LIBGPIOD_ADAPTERS], ["x$use_libgpiod" = "xyes"], [Linux libgpiod])
 PROCESS_ADAPTERS([LIBJAYLINK_ADAPTERS], ["x$use_internal_libjaylink" = "xyes" -o "x$use_libjaylink" = "xyes"], [libjaylink-0.2])
+PROCESS_ADAPTERS([PCIE_ADAPTERS], ["x$is_linux" = "xyes"], [Linux build])
+PROCESS_ADAPTERS([SERIAL_PORT_ADAPTERS], ["x$can_build_buspirate" = "xyes"],
+                                         [internal error: validation should happen beforehand])
+PROCESS_ADAPTERS([DUMMY_ADAPTER], [true], [unused])
 
 AS_IF([test "x$enable_linuxgpiod" != "xno"], [
   build_bitbang=yes
@@ -725,7 +768,6 @@ AS_IF([test "x$enable_esp_usb_jtag" != "xno"], [
 
 AM_CONDITIONAL([RELEASE], [test "x$build_release" = "xyes"])
 AM_CONDITIONAL([PARPORT], [test "x$build_parport" = "xyes"])
-AM_CONDITIONAL([DUMMY], [test "x$build_dummy" = "xyes"])
 AM_CONDITIONAL([GIVEIO], [test "x$parport_use_giveio" = "xyes"])
 AM_CONDITIONAL([EP93XX], [test "x$build_ep93xx" = "xyes"])
 AM_CONDITIONAL([AT91RM9200], [test "x$build_at91rm9200" = "xyes"])
@@ -740,9 +782,7 @@ AM_CONDITIONAL([USB_BLASTER_DRIVER], [test "x$enable_usb_blaster" != "xno" -o "x
 AM_CONDITIONAL([AMTJTAGACCEL], [test "x$build_amtjtagaccel" = "xyes"])
 AM_CONDITIONAL([GW16012], [test "x$build_gw16012" = "xyes"])
 AM_CONDITIONAL([REMOTE_BITBANG], [test "x$build_remote_bitbang" = "xyes"])
-AM_CONDITIONAL([BUSPIRATE], [test "x$enable_buspirate" != "xno"])
 AM_CONDITIONAL([SYSFSGPIO], [test "x$build_sysfsgpio" = "xyes"])
-AM_CONDITIONAL([XLNX_PCIE_XVC], [test "x$build_xlnx_pcie_xvc" = "xyes"])
 AM_CONDITIONAL([USE_LIBUSB1], [test "x$use_libusb1" = "xyes"])
 AM_CONDITIONAL([IS_CYGWIN], [test "x$is_cygwin" = "xyes"])
 AM_CONDITIONAL([IS_MINGW], [test "x$is_mingw" = "xyes"])
@@ -754,10 +794,14 @@ AM_CONDITIONAL([USE_LIBGPIOD], [test "x$use_libgpiod" = "xyes"])
 AM_CONDITIONAL([USE_HIDAPI], [test "x$use_hidapi" = "xyes"])
 AM_CONDITIONAL([USE_LIBJAYLINK], [test "x$use_libjaylink" = "xyes"])
 AM_CONDITIONAL([RSHIM], [test "x$build_rshim" = "xyes"])
+AM_CONDITIONAL([DMEM], [test "x$build_dmem" = "xyes"])
 AM_CONDITIONAL([HAVE_CAPSTONE], [test "x$enable_capstone" != "xno"])
 
 AM_CONDITIONAL([INTERNAL_JIMTCL], [test "x$use_internal_jimtcl" = "xyes"])
+AM_CONDITIONAL([HAVE_JIMTCL_PKG_CONFIG], [test "x$have_jimtcl_pkg_config" = "xyes"])
 AM_CONDITIONAL([INTERNAL_LIBJAYLINK], [test "x$use_internal_libjaylink" = "xyes"])
+
+AM_CONDITIONAL([USE_GCOV], [test "x$enable_gcov" = "xyes"])
 
 # Look for environ alternatives.  Possibility #1: is environ in unistd.h or stdlib.h?
 AC_MSG_CHECKING([for environ in unistd.h and stdlib.h])
@@ -833,7 +877,9 @@ m4_foreach([adapter], [USB1_ADAPTERS,
 	LIBFTDI_USB1_ADAPTERS,
 	LIBGPIOD_ADAPTERS,
 	LIBJAYLINK_ADAPTERS, PCIE_ADAPTERS, SERIAL_PORT_ADAPTERS,
-	OPTIONAL_LIBRARIES],
+	DUMMY_ADAPTER,
+	OPTIONAL_LIBRARIES,
+	COVERAGE],
 	[s=m4_format(["%-40s"], ADAPTER_DESC([adapter]))
 	AS_CASE([$ADAPTER_VAR([adapter])],
 		[auto], [
@@ -844,6 +890,11 @@ m4_foreach([adapter], [USB1_ADAPTERS,
 		],
 		[no], [
 			echo "$s"no
+		],
+		[
+			AC_MSG_ERROR(m4_normalize([
+				Error in [adapter] "ADAPTER_ARG([adapter])": Variable "ADAPTER_VAR([adapter])"
+				has invalid value "$ADAPTER_VAR([adapter])".]))
 	])
 ])
 echo

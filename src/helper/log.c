@@ -19,6 +19,7 @@
 #include "command.h"
 #include "replacements.h"
 #include "time_support.h"
+#include <server/gdb_server.h>
 #include <server/server.h>
 
 #include <stdarg.h>
@@ -52,7 +53,7 @@ static const char * const log_strings[6] = {
 static int count;
 
 /* forward the log to the listeners */
-static void log_forward(const char *file, unsigned line, const char *function, const char *string)
+static void log_forward(const char *file, unsigned int line, const char *function, const char *string)
 {
 	struct log_callback *cb, *next;
 	cb = log_callbacks;
@@ -132,7 +133,7 @@ static void log_puts(enum log_levels level,
 
 void log_printf(enum log_levels level,
 	const char *file,
-	unsigned line,
+	unsigned int line,
 	const char *function,
 	const char *format,
 	...)
@@ -155,7 +156,7 @@ void log_printf(enum log_levels level,
 	va_end(ap);
 }
 
-void log_vprintf_lf(enum log_levels level, const char *file, unsigned line,
+void log_vprintf_lf(enum log_levels level, const char *file, unsigned int line,
 		const char *function, const char *format, va_list args)
 {
 	char *tmp;
@@ -181,7 +182,7 @@ void log_vprintf_lf(enum log_levels level, const char *file, unsigned line,
 
 void log_printf_lf(enum log_levels level,
 	const char *file,
-	unsigned line,
+	unsigned int line,
 	const char *function,
 	const char *format,
 	...)
@@ -213,31 +214,28 @@ COMMAND_HANDLER(handle_debug_level_command)
 
 COMMAND_HANDLER(handle_log_output_command)
 {
-	if (CMD_ARGC == 0 || (CMD_ARGC == 1 && strcmp(CMD_ARGV[0], "default") == 0)) {
-		if (log_output != stderr && log_output) {
-			/* Close previous log file, if it was open and wasn't stderr. */
-			fclose(log_output);
-		}
-		log_output = stderr;
-		LOG_DEBUG("set log_output to default");
-		return ERROR_OK;
-	}
-	if (CMD_ARGC == 1) {
-		FILE *file = fopen(CMD_ARGV[0], "w");
+	if (CMD_ARGC > 1)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	FILE *file;
+	if (CMD_ARGC == 1 && strcmp(CMD_ARGV[0], "default") != 0) {
+		file = fopen(CMD_ARGV[0], "w");
 		if (!file) {
-			LOG_ERROR("failed to open output log '%s'", CMD_ARGV[0]);
+			command_print(CMD, "failed to open output log \"%s\"", CMD_ARGV[0]);
 			return ERROR_FAIL;
 		}
-		if (log_output != stderr && log_output) {
-			/* Close previous log file, if it was open and wasn't stderr. */
-			fclose(log_output);
-		}
-		log_output = file;
-		LOG_DEBUG("set log_output to \"%s\"", CMD_ARGV[0]);
-		return ERROR_OK;
+		command_print(CMD, "set log_output to \"%s\"", CMD_ARGV[0]);
+	} else {
+		file = stderr;
+		command_print(CMD, "set log_output to default");
 	}
 
-	return ERROR_COMMAND_SYNTAX_ERROR;
+	if (log_output != stderr && log_output) {
+		/* Close previous log file, if it was open and wasn't stderr. */
+		fclose(log_output);
+	}
+	log_output = file;
+	return ERROR_OK;
 }
 
 static const struct command_registration log_command_handlers[] = {
@@ -246,7 +244,7 @@ static const struct command_registration log_command_handlers[] = {
 		.handler = handle_log_output_command,
 		.mode = COMMAND_ANY,
 		.help = "redirect logging to a file (default: stderr)",
-		.usage = "[file_name | \"default\"]",
+		.usage = "[file_name | 'default']",
 	},
 	{
 		.name = "debug_level",
@@ -399,9 +397,7 @@ char *alloc_printf(const char *format, ...)
 
 static void gdb_timeout_warning(int64_t delta_time)
 {
-	extern int gdb_actual_connections;
-
-	if (gdb_actual_connections)
+	if (gdb_get_actual_connections())
 		LOG_WARNING("keep_alive() was not invoked in the "
 			"%d ms timelimit. GDB alive packet not "
 			"sent! (%" PRId64 " ms). Workaround: increase "
@@ -509,7 +505,7 @@ void log_socket_error(const char *socket_desc)
  * Find the first non-printable character in the char buffer, return a pointer to it.
  * If no such character exists, return NULL.
  */
-char *find_nonprint_char(char *buf, unsigned buf_len)
+const char *find_nonprint_char(const char *buf, unsigned int buf_len)
 {
 	for (unsigned int i = 0; i < buf_len; i++) {
 		if (!isprint(buf[i]))

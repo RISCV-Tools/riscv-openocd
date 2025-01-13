@@ -18,6 +18,11 @@
 #include "rtos/rtos.h"
 #include "smp.h"
 
+enum breakpoint_watchpoint {
+	BREAKPOINT,
+	WATCHPOINT,
+};
+
 static const char * const breakpoint_type_strings[] = {
 	"hardware",
 	"software"
@@ -34,7 +39,7 @@ static int bpwp_unique_id;
 
 static int breakpoint_add_internal(struct target *target,
 	target_addr_t address,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	struct breakpoint *breakpoint = target->breakpoints;
@@ -48,7 +53,7 @@ static int breakpoint_add_internal(struct target *target,
 			 * breakpoint" ... check all the parameters before
 			 * succeeding.
 			 */
-			LOG_ERROR("Duplicate Breakpoint address: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Breakpoint address: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
 				address, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 		}
@@ -79,16 +84,15 @@ static int breakpoint_add_internal(struct target *target,
 		default:
 			reason = "unknown reason";
 fail:
-			LOG_ERROR("can't add breakpoint: %s", reason);
+			LOG_TARGET_ERROR(target, "can't add breakpoint: %s", reason);
 			free((*breakpoint_p)->orig_instr);
 			free(*breakpoint_p);
 			*breakpoint_p = NULL;
 			return retval;
 	}
 
-	LOG_DEBUG("[%d] added %s breakpoint at " TARGET_ADDR_FMT
+	LOG_TARGET_DEBUG(target, "added %s breakpoint at " TARGET_ADDR_FMT
 			" of length 0x%8.8x, (BPID: %" PRIu32 ")",
-		target->coreid,
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->address, (*breakpoint_p)->length,
 		(*breakpoint_p)->unique_id);
@@ -98,7 +102,7 @@ fail:
 
 static int context_breakpoint_add_internal(struct target *target,
 	uint32_t asid,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	struct breakpoint *breakpoint = target->breakpoints;
@@ -111,7 +115,7 @@ static int context_breakpoint_add_internal(struct target *target,
 			 * breakpoint" ... check all the parameters before
 			 * succeeding.
 			 */
-			LOG_ERROR("Duplicate Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
 				asid, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 		}
@@ -130,14 +134,14 @@ static int context_breakpoint_add_internal(struct target *target,
 	(*breakpoint_p)->unique_id = bpwp_unique_id++;
 	retval = target_add_context_breakpoint(target, *breakpoint_p);
 	if (retval != ERROR_OK) {
-		LOG_ERROR("could not add breakpoint");
+		LOG_TARGET_ERROR(target, "could not add breakpoint");
 		free((*breakpoint_p)->orig_instr);
 		free(*breakpoint_p);
 		*breakpoint_p = NULL;
 		return retval;
 	}
 
-	LOG_DEBUG("added %s Context breakpoint at 0x%8.8" PRIx32 " of length 0x%8.8x, (BPID: %" PRIu32 ")",
+	LOG_TARGET_DEBUG(target, "added %s Context breakpoint at 0x%8.8" PRIx32 " of length 0x%8.8x, (BPID: %" PRIu32 ")",
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->asid, (*breakpoint_p)->length,
 		(*breakpoint_p)->unique_id);
@@ -148,7 +152,7 @@ static int context_breakpoint_add_internal(struct target *target,
 static int hybrid_breakpoint_add_internal(struct target *target,
 	target_addr_t address,
 	uint32_t asid,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	struct breakpoint *breakpoint = target->breakpoints;
@@ -161,11 +165,11 @@ static int hybrid_breakpoint_add_internal(struct target *target,
 			 * breakpoint" ... check all the parameters before
 			 * succeeding.
 			 */
-			LOG_ERROR("Duplicate Hybrid Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Hybrid Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
 				asid, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 		} else if ((breakpoint->address == address) && (breakpoint->asid == 0)) {
-			LOG_ERROR("Duplicate Breakpoint IVA: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Breakpoint IVA: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
 				address, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 
@@ -186,13 +190,13 @@ static int hybrid_breakpoint_add_internal(struct target *target,
 
 	retval = target_add_hybrid_breakpoint(target, *breakpoint_p);
 	if (retval != ERROR_OK) {
-		LOG_ERROR("could not add breakpoint");
+		LOG_TARGET_ERROR(target, "could not add breakpoint");
 		free((*breakpoint_p)->orig_instr);
 		free(*breakpoint_p);
 		*breakpoint_p = NULL;
 		return retval;
 	}
-	LOG_DEBUG(
+	LOG_TARGET_DEBUG(target,
 		"added %s Hybrid breakpoint at address " TARGET_ADDR_FMT " of length 0x%8.8x, (BPID: %" PRIu32 ")",
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->address,
@@ -204,7 +208,7 @@ static int hybrid_breakpoint_add_internal(struct target *target,
 
 int breakpoint_add(struct target *target,
 	target_addr_t address,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	if (target->smp && type == BKPT_HARD) {
@@ -228,7 +232,7 @@ int breakpoint_add(struct target *target,
 
 int context_breakpoint_add(struct target *target,
 	uint32_t asid,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	if (target->smp) {
@@ -252,7 +256,7 @@ int context_breakpoint_add(struct target *target,
 int hybrid_breakpoint_add(struct target *target,
 	target_addr_t address,
 	uint32_t asid,
-	uint32_t length,
+	unsigned int length,
 	enum breakpoint_type type)
 {
 	if (target->smp) {
@@ -278,7 +282,7 @@ int hybrid_breakpoint_add(struct target *target,
  * that is currently unavailable, but the breakpoint also affects a target that
  * is available.
  */
-static void breakpoint_free(struct target *data_target, struct target *breakpoint_target,
+static int breakpoint_free(struct target *data_target, struct target *breakpoint_target,
 		struct breakpoint *breakpoint_to_remove)
 {
 	struct breakpoint *breakpoint = data_target->breakpoints;
@@ -293,36 +297,51 @@ static void breakpoint_free(struct target *data_target, struct target *breakpoin
 	}
 
 	if (!breakpoint)
-		return;
+		return ERROR_BREAKPOINT_NOT_FOUND;
 
 	retval = target_remove_breakpoint(breakpoint_target, breakpoint);
+	if (retval != ERROR_OK) {
+		LOG_TARGET_ERROR(breakpoint_target, "could not remove breakpoint #%d on this target",
+						breakpoint->number);
+		return retval;
+	}
 
-	LOG_DEBUG("free BPID: %" PRIu32 " --> %d", breakpoint->unique_id, retval);
+	LOG_TARGET_DEBUG(data_target, "free BPID: %" PRIu32 " --> %d", breakpoint->unique_id, retval);
 	(*breakpoint_p) = breakpoint->next;
 	free(breakpoint->orig_instr);
 	free(breakpoint);
+
+	return ERROR_OK;
 }
 
-static void breakpoint_remove_all_internal(struct target *target)
+static int breakpoint_remove_all_internal(struct target *target)
 {
+	LOG_TARGET_DEBUG(target, "Delete all breakpoints");
+
 	struct breakpoint *breakpoint = target->breakpoints;
+	int retval = ERROR_OK;
 
 	while (breakpoint) {
 		struct breakpoint *tmp = breakpoint;
 		breakpoint = breakpoint->next;
-		breakpoint_free(target, target, tmp);
+		int status = breakpoint_free(target, target, tmp);
+		if (status != ERROR_OK)
+			retval = status;
 	}
+
+	return retval;
 }
 
-void breakpoint_remove(struct target *target, target_addr_t address)
+int breakpoint_remove(struct target *target, target_addr_t address)
 {
 	if (!target->smp) {
 		struct breakpoint *breakpoint = breakpoint_find(target, address);
 		if (breakpoint)
-			breakpoint_free(target, target, breakpoint);
-		return;
+			return breakpoint_free(target, target, breakpoint);
+		return ERROR_BREAKPOINT_NOT_FOUND;
 	}
 
+	int retval = ERROR_OK;
 	unsigned int found = 0;
 	struct target_list *head;
 	/* Target where we found a software breakpoint. */
@@ -360,13 +379,15 @@ void breakpoint_remove(struct target *target, target_addr_t address)
 				software_breakpoint = breakpoint;
 			}
 		} else {
-			breakpoint_free(curr, curr, breakpoint);
+			int status = breakpoint_free(curr, curr, breakpoint);
+			if (status != ERROR_OK)
+				retval = status;
 		}
 	}
 
 	if (!found) {
 		LOG_ERROR("no breakpoint at address " TARGET_ADDR_FMT " found", address);
-		return;
+		return ERROR_BREAKPOINT_NOT_FOUND;
 	}
 
 	if (software_breakpoint) {
@@ -387,50 +408,123 @@ void breakpoint_remove(struct target *target, target_addr_t address)
 			/* Remove the software breakpoint through
 			* remove_target, but update the breakpoints structure
 			* of software_breakpoint_target. */
-			/* TODO: If there is an error, can we try to remove the
-			 * same breakpoint from a different target? */
-			breakpoint_free(software_breakpoint_target, remove_target, software_breakpoint);
+			int status = breakpoint_free(software_breakpoint_target, remove_target, software_breakpoint);
+			if (status != ERROR_OK)
+				/* TODO: If there is an error, can we try to remove the
+				* same breakpoint from a different target? */
+				retval = status;
 		} else {
 			LOG_WARNING("No halted target found to remove software breakpoint at "
 					TARGET_ADDR_FMT ".", address);
 		}
 	}
+
+	return retval;
 }
 
-void breakpoint_remove_all(struct target *target)
+static int watchpoint_free(struct target *target, struct watchpoint *watchpoint_to_remove)
 {
+	struct watchpoint *watchpoint = target->watchpoints;
+	struct watchpoint **watchpoint_p = &target->watchpoints;
+	int retval;
+
+	while (watchpoint) {
+		if (watchpoint == watchpoint_to_remove)
+			break;
+		watchpoint_p = &watchpoint->next;
+		watchpoint = watchpoint->next;
+	}
+
+	if (!watchpoint)
+		return ERROR_WATCHPOINT_NOT_FOUND;
+	retval = target_remove_watchpoint(target, watchpoint);
+	if (retval != ERROR_OK) {
+		LOG_TARGET_ERROR(target, "could not remove watchpoint #%d on this target",
+						 watchpoint->number);
+		return retval;
+	}
+
+	LOG_TARGET_DEBUG(target, "free WPID: %d --> %d", watchpoint->unique_id, retval);
+	(*watchpoint_p) = watchpoint->next;
+	free(watchpoint);
+
+	return ERROR_OK;
+}
+
+static int watchpoint_remove_all_internal(struct target *target)
+{
+	struct watchpoint *watchpoint = target->watchpoints;
+	int retval = ERROR_OK;
+
+	while (watchpoint) {
+		struct watchpoint *tmp = watchpoint;
+		watchpoint = watchpoint->next;
+		int status = watchpoint_free(target, tmp);
+		if (status != ERROR_OK)
+			retval = status;
+	}
+
+	return retval;
+}
+
+static int breakpoint_watchpoint_remove_all(struct target *target, enum breakpoint_watchpoint bp_wp)
+{
+	assert(bp_wp == BREAKPOINT || bp_wp == WATCHPOINT);
+	int retval = ERROR_OK;
 	if (target->smp) {
 		struct target_list *head;
 
 		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
-			breakpoint_remove_all_internal(curr);
+
+			int status = ERROR_OK;
+			if (bp_wp == BREAKPOINT)
+				status = breakpoint_remove_all_internal(curr);
+			else
+				status = watchpoint_remove_all_internal(curr);
+
+			if (status != ERROR_OK)
+				retval = status;
 		}
 	} else {
-		breakpoint_remove_all_internal(target);
+		if (bp_wp == BREAKPOINT)
+			retval = breakpoint_remove_all_internal(target);
+		else
+			retval = watchpoint_remove_all_internal(target);
 	}
+
+	return retval;
 }
 
-static void breakpoint_clear_target_internal(struct target *target)
+int breakpoint_remove_all(struct target *target)
 {
-	LOG_DEBUG("Delete all breakpoints for target: %s",
-		target_name(target));
-	while (target->breakpoints)
-		breakpoint_free(target, target, target->breakpoints);
+	return breakpoint_watchpoint_remove_all(target, BREAKPOINT);
 }
 
-void breakpoint_clear_target(struct target *target)
+int watchpoint_remove_all(struct target *target)
 {
+	return breakpoint_watchpoint_remove_all(target, WATCHPOINT);
+}
+
+int breakpoint_clear_target(struct target *target)
+{
+	int retval = ERROR_OK;
+
 	if (target->smp) {
 		struct target_list *head;
 
 		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
-			breakpoint_clear_target_internal(curr);
+			int status = breakpoint_remove_all_internal(curr);
+
+			if (status != ERROR_OK)
+				retval = status;
 		}
 	} else {
-		breakpoint_clear_target_internal(target);
+		retval = breakpoint_remove_all_internal(target);
 	}
+
+	return retval;
 }
 
 struct breakpoint *breakpoint_find(struct target *target, target_addr_t address)
@@ -448,7 +542,7 @@ struct breakpoint *breakpoint_find(struct target *target, target_addr_t address)
 }
 
 static int watchpoint_add_internal(struct target *target, target_addr_t address,
-		uint32_t length, enum watchpoint_rw rw, uint32_t value, uint32_t mask)
+		unsigned int length, enum watchpoint_rw rw, uint64_t value, uint64_t mask)
 {
 	struct watchpoint *watchpoint = target->watchpoints;
 	struct watchpoint **watchpoint_p = &target->watchpoints;
@@ -461,7 +555,7 @@ static int watchpoint_add_internal(struct target *target, target_addr_t address,
 				|| watchpoint->value != value
 				|| watchpoint->mask != mask
 				|| watchpoint->rw != rw) {
-				LOG_ERROR("address " TARGET_ADDR_FMT
+				LOG_TARGET_ERROR(target, "address " TARGET_ADDR_FMT
 					" already has watchpoint %d",
 					address, watchpoint->unique_id);
 				return ERROR_FAIL;
@@ -495,7 +589,7 @@ static int watchpoint_add_internal(struct target *target, target_addr_t address,
 		default:
 			reason = "unrecognized error";
 bye:
-			LOG_ERROR("can't add %s watchpoint at " TARGET_ADDR_FMT ", %s",
+			LOG_TARGET_ERROR(target, "can't add %s watchpoint at " TARGET_ADDR_FMT ", %s",
 				watchpoint_rw_strings[(*watchpoint_p)->rw],
 				address, reason);
 			free(*watchpoint_p);
@@ -503,9 +597,8 @@ bye:
 			return retval;
 	}
 
-	LOG_DEBUG("[%d] added %s watchpoint at " TARGET_ADDR_FMT
-			" of length 0x%8.8" PRIx32 " (WPID: %d)",
-		target->coreid,
+	LOG_TARGET_DEBUG(target, "added %s watchpoint at " TARGET_ADDR_FMT
+			" of length 0x%8.8x (WPID: %d)",
 		watchpoint_rw_strings[(*watchpoint_p)->rw],
 		(*watchpoint_p)->address,
 		(*watchpoint_p)->length,
@@ -515,7 +608,7 @@ bye:
 }
 
 int watchpoint_add(struct target *target, target_addr_t address,
-		uint32_t length, enum watchpoint_rw rw, uint32_t value, uint32_t mask)
+		unsigned int length, enum watchpoint_rw rw, uint64_t value, uint64_t mask)
 {
 	if (target->smp) {
 		struct target_list *head;
@@ -536,27 +629,6 @@ int watchpoint_add(struct target *target, target_addr_t address,
 	}
 }
 
-static void watchpoint_free(struct target *target, struct watchpoint *watchpoint_to_remove)
-{
-	struct watchpoint *watchpoint = target->watchpoints;
-	struct watchpoint **watchpoint_p = &target->watchpoints;
-	int retval;
-
-	while (watchpoint) {
-		if (watchpoint == watchpoint_to_remove)
-			break;
-		watchpoint_p = &watchpoint->next;
-		watchpoint = watchpoint->next;
-	}
-
-	if (!watchpoint)
-		return;
-	retval = target_remove_watchpoint(target, watchpoint);
-	LOG_DEBUG("free WPID: %d --> %d", watchpoint->unique_id, retval);
-	(*watchpoint_p) = watchpoint->next;
-	free(watchpoint);
-}
-
 static int watchpoint_remove_internal(struct target *target, target_addr_t address)
 {
 	struct watchpoint *watchpoint = target->watchpoints;
@@ -568,38 +640,66 @@ static int watchpoint_remove_internal(struct target *target, target_addr_t addre
 	}
 
 	if (watchpoint) {
-		watchpoint_free(target, watchpoint);
-		return 1;
+		return watchpoint_free(target, watchpoint);
 	} else {
-		if (!target->smp)
-			LOG_ERROR("no watchpoint at address " TARGET_ADDR_FMT " found", address);
-		return 0;
+		return ERROR_WATCHPOINT_NOT_FOUND;
 	}
 }
 
-void watchpoint_remove(struct target *target, target_addr_t address)
+int watchpoint_remove(struct target *target, target_addr_t address)
 {
+	int retval = ERROR_OK;
+	unsigned int num_found_watchpoints = 0;
 	if (target->smp) {
-		unsigned int num_watchpoints = 0;
 		struct target_list *head;
 
 		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
-			num_watchpoints += watchpoint_remove_internal(curr, address);
+			int status = watchpoint_remove_internal(curr, address);
+
+			if (status != ERROR_WATCHPOINT_NOT_FOUND) {
+				num_found_watchpoints++;
+
+				if (status != ERROR_OK) {
+					LOG_TARGET_ERROR(curr, "failed to remove watchpoint at address " TARGET_ADDR_FMT, address);
+					retval = status;
+				}
+			}
 		}
-		if (num_watchpoints == 0)
-			LOG_ERROR("no watchpoint at address " TARGET_ADDR_FMT " num_watchpoints", address);
 	} else {
-		watchpoint_remove_internal(target, address);
+		retval = watchpoint_remove_internal(target, address);
+
+		if (retval != ERROR_WATCHPOINT_NOT_FOUND) {
+			num_found_watchpoints++;
+
+			if (retval != ERROR_OK)
+				LOG_TARGET_ERROR(target, "failed to remove watchpoint at address " TARGET_ADDR_FMT, address);
+		}
 	}
+
+	if (num_found_watchpoints == 0) {
+		LOG_TARGET_ERROR(target, "no watchpoint at address " TARGET_ADDR_FMT " found", address);
+		return ERROR_WATCHPOINT_NOT_FOUND;
+	}
+
+	return retval;
 }
 
-void watchpoint_clear_target(struct target *target)
+int watchpoint_clear_target(struct target *target)
 {
-	LOG_DEBUG("Delete all watchpoints for target: %s",
-		target_name(target));
-	while (target->watchpoints)
-		watchpoint_free(target, target->watchpoints);
+	LOG_TARGET_DEBUG(target, "Delete all watchpoints");
+
+	struct watchpoint *watchpoint = target->watchpoints;
+	int retval = ERROR_OK;
+
+	while (watchpoint) {
+		struct watchpoint *tmp = watchpoint;
+		watchpoint = watchpoint->next;
+		int status = watchpoint_free(target, tmp);
+		if (status != ERROR_OK)
+			retval = status;
+	}
+	return retval;
 }
 
 int watchpoint_hit(struct target *target, enum watchpoint_rw *rw,
@@ -615,7 +715,7 @@ int watchpoint_hit(struct target *target, enum watchpoint_rw *rw,
 	*rw = hit_watchpoint->rw;
 	*address = hit_watchpoint->address;
 
-	LOG_DEBUG("Found hit watchpoint at " TARGET_ADDR_FMT " (WPID: %d)",
+	LOG_TARGET_DEBUG(target, "Found hit watchpoint at " TARGET_ADDR_FMT " (WPID: %d)",
 		hit_watchpoint->address,
 		hit_watchpoint->unique_id);
 
