@@ -16,22 +16,7 @@
 #include "helper/binarybuffer.h"
 #include "server/gdb_server.h"
 
-/* RTOSs */
-extern struct rtos_type freertos_rtos;
-extern struct rtos_type threadx_rtos;
-extern struct rtos_type ecos_rtos;
-extern struct rtos_type linux_rtos;
-extern struct rtos_type chibios_rtos;
-extern struct rtos_type chromium_ec_rtos;
-extern struct rtos_type embkernel_rtos;
-extern struct rtos_type mqx_rtos;
-extern struct rtos_type ucos_iii_rtos;
-extern struct rtos_type nuttx_rtos;
-extern struct rtos_type hwthread_rtos;
-extern struct rtos_type riot_rtos;
-extern struct rtos_type zephyr_rtos;
-
-static struct rtos_type *rtos_types[] = {
+static const struct rtos_type *rtos_types[] = {
 	&threadx_rtos,
 	&freertos_rtos,
 	&ecos_rtos,
@@ -44,14 +29,13 @@ static struct rtos_type *rtos_types[] = {
 	&nuttx_rtos,
 	&riot_rtos,
 	&zephyr_rtos,
+	&rtkernel_rtos,
 	/* keep this as last, as it always matches with rtos auto */
 	&hwthread_rtos,
 	NULL
 };
 
 static int rtos_try_next(struct target *target);
-
-int rtos_thread_packet(struct connection *connection, const char *packet, int packet_size);
 
 int rtos_smp_init(struct target *target)
 {
@@ -71,7 +55,7 @@ static int rtos_target_for_threadid(struct connection *connection,
 	return ERROR_OK;
 }
 
-static int os_alloc(struct target *target, struct rtos_type *ostype,
+static int os_alloc(struct target *target, const struct rtos_type *ostype,
 					struct command_context *cmd_ctx)
 {
 	struct rtos *os = target->rtos = calloc(1, sizeof(struct rtos));
@@ -99,11 +83,12 @@ static void os_free(struct target *target)
 		return;
 
 	free(target->rtos->symbols);
+	rtos_free_threadlist(target->rtos);
 	free(target->rtos);
 	target->rtos = NULL;
 }
 
-static int os_alloc_create(struct target *target, struct rtos_type *ostype,
+static int os_alloc_create(struct target *target, const struct rtos_type *ostype,
 						   struct command_context *cmd_ctx)
 {
 	int ret = os_alloc(target, ostype, cmd_ctx);
@@ -124,7 +109,7 @@ int rtos_create(struct jim_getopt_info *goi, struct target *target)
 	Jim_Obj *res;
 	int e;
 
-	if (!goi->isconfigure && goi->argc != 0) {
+	if (!goi->is_configure && goi->argc != 0) {
 		Jim_WrongNumArgs(goi->interp, goi->argc, goi->argv, "NO PARAMS");
 		return JIM_ERR;
 	}
@@ -332,7 +317,7 @@ int rtos_qsymbol(struct connection *connection, char const *packet, int packet_s
 	reply_len += 2 * strlen(next_suffix);            /* hexify(..., next_suffix, ...) */
 	reply_len += 1;                                  /* Terminating NUL */
 	if (reply_len > sizeof(reply)) {
-		LOG_ERROR("ERROR: RTOS symbol '%s%s' name is too long for GDB!", next_sym->symbol_name, next_suffix);
+		LOG_ERROR("RTOS symbol '%s%s' name is too long for GDB", next_sym->symbol_name, next_suffix);
 		goto done;
 	}
 
@@ -412,7 +397,7 @@ int rtos_thread_packet(struct connection *connection, char const *packet, int pa
 		return ERROR_OK;
 	} else if (strncmp(packet, "qSymbol", 7) == 0) {
 		if (rtos_qsymbol(connection, packet, packet_size) == 1) {
-			if (target->rtos_auto_detect == true) {
+			if (target->rtos_auto_detect) {
 				target->rtos_auto_detect = false;
 				target->rtos->type->create(target);
 			}
@@ -527,68 +512,70 @@ int rtos_get_gdb_reg(struct connection *connection, int reg_num)
 {
 	struct target *target = get_target_from_connection(connection);
 	threadid_t current_threadid = target->rtos->current_threadid;
-	if ((target->rtos) && (current_threadid != -1) &&
-			(current_threadid != 0) &&
-			((current_threadid != target->rtos->current_thread) ||
-			(target->smp))) {	/* in smp several current thread are possible */
-		struct rtos_reg *reg_list;
-		int num_regs;
-
-		LOG_DEBUG("getting register %d for thread 0x%" PRIx64
-				  ", target->rtos->current_thread=0x%" PRIx64,
-										reg_num,
-										current_threadid,
-										target->rtos->current_thread);
-
-		int retval;
-		if (target->rtos->type->get_thread_reg_value) {
-			uint32_t reg_size;
-			uint8_t *reg_value;
-			retval = target->rtos->type->get_thread_reg_value(target->rtos,
-					current_threadid, reg_num, &reg_size, &reg_value);
-			if (retval != ERROR_OK) {
-				LOG_ERROR("RTOS: failed to get register %d", reg_num);
-				return retval;
-			}
-
-			/* Create a reg_list with one register that can
-			 * accommodate the full size of the one we just got the
-			 * value for. To do that we allocate extra space off the
-			 * end of the struct, relying on the fact that
-			 * rtos_reg.value is the last element in the struct. */
-			reg_list = calloc(1, sizeof(*reg_list) + DIV_ROUND_UP(reg_size, 8));
-			if (!reg_list) {
-				free(reg_value);
-				LOG_ERROR("Failed to allocated reg_list for %d-byte register.",
-					  reg_size);
-				return ERROR_FAIL;
-			}
-			reg_list[0].number = reg_num;
-			reg_list[0].size = reg_size;
-			memcpy(&reg_list[0].value, reg_value, DIV_ROUND_UP(reg_size, 8));
-			free(reg_value);
-			num_regs = 1;
-		} else {
-			retval = target->rtos->type->get_thread_reg_list(target->rtos,
-					current_threadid,
-					&reg_list,
-					&num_regs);
-			if (retval != ERROR_OK) {
-				LOG_ERROR("RTOS: failed to get register list");
-				return retval;
-			}
-		}
-
-		for (int i = 0; i < num_regs; ++i) {
-			if (reg_list[i].number == (uint32_t)reg_num) {
-				rtos_put_gdb_reg_list(connection, reg_list + i, 1);
-				free(reg_list);
-				return ERROR_OK;
-			}
-		}
-
-		free(reg_list);
+	if (!target->rtos ||
+			current_threadid == -1 ||
+			current_threadid == 0 ||
+			(current_threadid == target->rtos->current_thread &&
+			 !target->smp)) { /* in smp several current thread are possible */
+		return ERROR_NOT_IMPLEMENTED;
 	}
+
+	struct rtos_reg *reg_list;
+	int num_regs;
+
+	LOG_TARGET_DEBUG(target, "getting register %d for thread 0x%" PRIx64
+				", target->rtos->current_thread=0x%" PRIx64,
+				reg_num, current_threadid, target->rtos->current_thread);
+
+	int retval;
+	if (target->rtos->type->get_thread_reg_value) {
+		uint32_t reg_size;
+		uint8_t *reg_value;
+		retval = target->rtos->type->get_thread_reg_value(target->rtos,
+				current_threadid, reg_num, &reg_size, &reg_value);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("RTOS: failed to get register %d", reg_num);
+			return retval;
+		}
+
+		/* Create a reg_list with one register that can
+		 * accommodate the full size of the one we just got the
+		 * value for. To do that we allocate extra space off the
+		 * end of the struct, relying on the fact that
+		 * rtos_reg.value is the last element in the struct. */
+		reg_list = calloc(1, sizeof(*reg_list) + DIV_ROUND_UP(reg_size, 8));
+		if (!reg_list) {
+			free(reg_value);
+			LOG_ERROR("Failed to allocated reg_list for %d-byte register.",
+					reg_size);
+			return ERROR_FAIL;
+		}
+		reg_list[0].number = reg_num;
+		reg_list[0].size = reg_size;
+		memcpy(&reg_list[0].value, reg_value, DIV_ROUND_UP(reg_size, 8));
+		free(reg_value);
+		num_regs = 1;
+	} else {
+		retval = target->rtos->type->get_thread_reg_list(target->rtos,
+				current_threadid,
+				&reg_list,
+				&num_regs);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("RTOS: failed to get register list");
+			return retval;
+		}
+	}
+
+	for (int i = 0; i < num_regs; ++i) {
+		if (reg_list[i].number == (uint32_t)reg_num) {
+			rtos_put_gdb_reg_list(connection, reg_list + i, 1);
+			free(reg_list);
+			return ERROR_OK;
+		}
+	}
+
+	free(reg_list);
+
 	return ERROR_FAIL;
 }
 
@@ -648,7 +635,7 @@ int rtos_generic_stack_read(struct target *target,
 	int retval;
 
 	if (stack_ptr == 0) {
-		LOG_ERROR("Error: null stack pointer in thread");
+		LOG_ERROR("null stack pointer in thread");
 		return -5;
 	}
 	/* Read the stack */
@@ -657,7 +644,10 @@ int rtos_generic_stack_read(struct target *target,
 
 	if (stacking->stack_growth_direction == 1)
 		address -= stacking->stack_registers_size;
-	retval = target_read_buffer(target, address, stacking->stack_registers_size, stack_data);
+	if (stacking->read_stack)
+		retval = stacking->read_stack(target, address, stacking, stack_data);
+	else
+		retval = target_read_buffer(target, address, stacking->stack_registers_size, stack_data);
 	if (retval != ERROR_OK) {
 		free(stack_data);
 		LOG_ERROR("Error reading stack frame from thread");
@@ -800,7 +790,7 @@ int rtos_generic_stack_write_reg(struct target *target,
 static int rtos_try_next(struct target *target)
 {
 	struct rtos *os = target->rtos;
-	struct rtos_type **type = rtos_types;
+	const struct rtos_type **type = rtos_types;
 
 	if (!os)
 		return 0;

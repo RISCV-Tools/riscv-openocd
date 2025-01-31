@@ -123,7 +123,7 @@ static int linux_read_memory(struct target *target,
 		target->rtos->rtos_specific_params;
 	uint32_t pa = (address & linux_os->phys_mask) + linux_os->phys_base;
 #endif
-	if (address < 0xc000000) {
+	if (address < 0xc0000000) {
 		LOG_ERROR("linux awareness : address in user space");
 		return ERROR_FAIL;
 	}
@@ -624,7 +624,7 @@ static struct threads *liste_add_task(struct threads *task_list, struct threads 
 {
 	t->next = NULL;
 
-	if (!*last)
+	if (!*last) {
 		if (!task_list) {
 			task_list = t;
 			return task_list;
@@ -637,7 +637,8 @@ static struct threads *liste_add_task(struct threads *task_list, struct threads 
 			temp->next = t;
 			*last = t;
 			return task_list;
-		} else {
+		}
+	} else {
 		(*last)->next = t;
 		*last = t;
 		return task_list;

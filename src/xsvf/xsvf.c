@@ -217,7 +217,7 @@ COMMAND_HANDLER(handle_xsvf_command)
 
 	bool collecting_path = false;
 	tap_state_t path[XSTATE_MAX_PATH];
-	unsigned pathlen = 0;
+	unsigned int pathlen = 0;
 
 	/* a flag telling whether to clock TCK during waits,
 	 * or simply sleep, controlled by virt2
@@ -749,10 +749,10 @@ COMMAND_HANDLER(handle_xsvf_command)
 				int delay;
 
 				if (read(xsvf_fd, &wait_local, 1) < 0
-					|| read(xsvf_fd, &end, 1) < 0
-					|| read(xsvf_fd, delay_buf, 4) < 0) {
-						do_abort = 1;
-						break;
+						|| read(xsvf_fd, &end, 1) < 0
+						|| read(xsvf_fd, delay_buf, 4) < 0) {
+					do_abort = 1;
+					break;
 				}
 
 				wait_state = xsvf_to_tap(wait_local);

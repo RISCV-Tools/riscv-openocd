@@ -23,6 +23,7 @@
 #include "openocd.h"
 #include "tcl_server.h"
 #include "telnet_server.h"
+#include "ipdbg.h"
 
 #include <signal.h>
 
@@ -481,7 +482,6 @@ int server_loop(struct command_context *command_context)
 				timeout_ms = polling_period;
 			tv.tv_usec = timeout_ms * 1000;
 			/* Only while we're sleeping we'll let others run */
-			kept_alive();
 			retval = socket_select(fd_max + 1, &read_fds, NULL, NULL, &tv);
 		}
 
@@ -715,6 +715,7 @@ void server_free(void)
 	tcl_service_free();
 	telnet_service_free();
 	jsp_service_free();
+	ipdbg_server_free();
 
 	free(bindto_name);
 }
