@@ -7,7 +7,7 @@ AUTOMAKE_OPTIONS = gnu 1.6
 .DELETE_ON_ERROR:
 
 # make sure we pass the correct jimtcl flags to distcheck
-DISTCHECK_CONFIGURE_FLAGS = --disable-install-jim
+AM_DISTCHECK_CONFIGURE_FLAGS = --disable-install-jim
 
 # do not run Jim Tcl tests (esp. during distcheck)
 check-recursive: SUBDIRS :=
@@ -26,27 +26,38 @@ noinst_LTLIBRARIES =
 info_TEXINFOS =
 dist_man_MANS =
 EXTRA_DIST =
+DISTCLEANFILES =
 
 if INTERNAL_JIMTCL
 SUBDIRS += jimtcl
 DIST_SUBDIRS += jimtcl
+EXTRA_DIST += jimtcl/configure.gnu
+# jimtcl from 0.79 to 0.82 miss cleaning jsmn.o
+DISTCLEANFILES += jimtcl/jsmn/jsmn.o
 endif
 
 # common flags used in openocd build
-AM_CFLAGS = $(GCC_WARNINGS)\
-			  -DFD_SETSIZE=128
+AM_CFLAGS = $(GCC_WARNINGS)
+AM_LDFLAGS =
 
 AM_CPPFLAGS = $(HOST_CPPFLAGS)\
 			  -I$(top_srcdir)/src \
 			  -I$(top_builddir)/src \
 			  -DPKGDATADIR=\"$(pkgdatadir)\" \
-			  -DBINDIR=\"$(bindir)\"\
-			  -DFD_SETSIZE=128
+			  -DBINDIR=\"$(bindir)\"
 
 if INTERNAL_JIMTCL
 AM_CPPFLAGS += -I$(top_srcdir)/jimtcl \
 			   -I$(top_builddir)/jimtcl
+else
+AM_CPPFLAGS += $(JIMTCL_CFLAGS)
 endif
+
+if USE_GCOV
+AM_CFLAGS += --coverage
+AM_LDFLAGS += --coverage
+endif
+
 EXTRA_DIST += \
 	BUGS \
 	HACKING \
@@ -62,10 +73,13 @@ EXTRA_DIST += \
 	LICENSES/preferred/BSD-2-Clause-Views \
 	LICENSES/preferred/BSD-3-Clause \
 	LICENSES/preferred/BSD-Source-Code \
+	LICENSES/preferred/CC0-1.0 \
 	LICENSES/preferred/GFDL-1.2 \
 	LICENSES/preferred/gfdl-1.2.texi.readme \
 	LICENSES/preferred/GPL-2.0 \
+	LICENSES/preferred/LGPL-2.1 \
 	LICENSES/preferred/MIT \
+	LICENSES/stand-alone/Apache-2.0 \
 	LICENSES/stand-alone/GPL-3.0 \
 	tools/logger.pl \
 	tools/rlink_make_speed_table \
@@ -109,9 +123,13 @@ TCL_PATH = tcl
 TCL_FILES = find $(srcdir)/$(TCL_PATH) -name '*.cfg' -o -name '*.tcl' -o -name '*.txt' | \
 		sed -e 's,^$(srcdir)/$(TCL_PATH),,'
 
+# The git log command below generates many empty text lines with only some space characters
+# for indentation purposes, so use sed to trim all trailing whitespace.
 dist-hook:
 	if test -d $(srcdir)/.git -a \( ! -e $(distdir)/ChangeLog -o -w $(distdir)/ChangeLog \) ; then \
-		git --git-dir $(srcdir)/.git log | $(srcdir)/tools/git2cl/git2cl > $(distdir)/ChangeLog ; \
+		git --git-dir $(srcdir)/.git log --date=short --pretty="format:%ad  %aN <%aE>%n%n%w(0,4,6)* %B" \
+		| sed 's/[[:space:]]*$$//' > $(distdir)/ChangeLog.tmp && \
+		mv $(distdir)/ChangeLog.tmp $(distdir)/ChangeLog; \
 	fi
 	for i in $$($(TCL_FILES)); do \
 		j="$(distdir)/$(TCL_PATH)/$$i" && \
@@ -131,18 +149,9 @@ uninstall-hook:
 
 distclean-local:
 	rm -rf Doxyfile doxygen
-	rm -f $(srcdir)/jimtcl/configure.gnu
+	-rm -f $(srcdir)/jimtcl/configure.gnu
 
-# We want every change to have Signed-off-by. This is tricky to enforce in
-# Travis, because it automatically makes temporary commits when merging. So
-# instead we have a hook that enforces this in each workspace. To make sure
-# that users actually use those hooks, we point git at them here.
-# If git fails for some reason, that's OK. It's probably because somebody is
-# building the source completely outside a git repo.
-all-local:
-	cd $(srcdir) && git config core.hooksPath ./git-hooks || true
-
-DISTCLEANFILES = doxygen.log
+DISTCLEANFILES += doxygen.log
 
 METASOURCES = AUTO
 
